@@ -19,6 +19,7 @@ CHECK_INTERVAL = 24 * 60 * 60
 FAIL_BACKOFF = 60 * 60
 STATE_FILE = os.path.expanduser("~/.config/muse-cli/update.json")
 PYPI_URL = "https://pypi.org/pypi/muse-cli/json"
+FORK_SOURCE = "git+https://github.com/Kahtaf/muse-cli.git@fix/agent-reliability"
 
 
 def version_key(value):
@@ -42,10 +43,10 @@ def upgrade_argv():
     prefix = os.path.realpath(sys.prefix)
     sep = os.sep
     if f"{sep}uv{sep}tools{sep}" in prefix:
-        return ["uv", "tool", "upgrade", "muse-cli"]
+        return ["uv", "tool", "install", "--force", "--upgrade", FORK_SOURCE]
     if f"{sep}pipx{sep}" in prefix:
-        return ["pipx", "upgrade", "muse-cli"]
-    return [sys.executable, "-m", "pip", "install", "-U", "muse-cli"]
+        return ["pipx", "install", "--force", FORK_SOURCE]
+    return [sys.executable, "-m", "pip", "install", "-U", FORK_SOURCE]
 
 
 def upgrade_command():
@@ -53,6 +54,8 @@ def upgrade_command():
 
 
 def _should_check():
+    if "+kahtaf." in __version__:
+        return False
     if os.environ.get("MUSE_NO_UPDATE_CHECK"):
         return False
     if os.environ.get("CI"):

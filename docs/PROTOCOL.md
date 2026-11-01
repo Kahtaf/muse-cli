@@ -47,6 +47,10 @@ chat / feed / goals / ideas / sessions / ...
 - **Response:** `ServiceResponse{payload = ServiceFrame{... response =
   ApplicationResponse{status, headers, body, end_body}}}` plus `body_chunk`
   frames until `end_body`.
+- A successful status alone does not complete a response. This fork requires
+  `end_body` and rejects a body still incomplete at the deadline. The same
+  monotonic deadline is passed through transport reassembly to socket receives;
+  this requires the bounded receive API in curl_cffi 0.17 or later.
 - **Subscriptions** (`chat.subscribe`, `chat.stream`, ...): same envelope, the
   server streams `application/x-ndjson` records in body chunks.
 - **Method table:** `routes.json` (258 methods extracted from the web bundle).
@@ -60,6 +64,9 @@ chat / feed / goals / ideas / sessions / ...
 - Genuine assistant replies have an **empty `reply_to_message_id`**; proactive
   pushes (Telegram drafts, background task updates) are self-referential
   there. That is how `send` tells a reply apart from background chatter.
+- The pre-send history boundary must succeed before dispatch. Failure must not
+  silently reset that boundary to zero. Concurrent sends in the same chat still
+  cannot be reliably correlated from history alone; use dedicated side chats.
 - Generated media arrives as a **separate** assistant event after the text
   reply, ~20 s later for an image. `send --download` therefore waits until
   the history seq has been quiet for `SETTLE` seconds before collecting files.

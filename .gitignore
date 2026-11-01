@@ -9,6 +9,8 @@ uv.lock
 
 # Local secrets and state (never commit)
 cookies.txt
+cookies.txt.bak
+.cookies.*
 agent-cookies.json
 config.json
 *.har

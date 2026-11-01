@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.x"
       - name: Bump patch version on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.repository == 'nikships/muse-cli' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: python scripts/bump_version.py
 
       - name: Read release version
@@ -83,7 +83,7 @@ jobs:
   record-release:
     name: Commit version and tag
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository == 'nikships/muse-cli' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -115,7 +115,7 @@ jobs:
     name: Publish to PyPI
     needs: [build, record-release]
     if: >-
-      ${{ !cancelled() && needs.build.result == 'success' &&
+      ${{ github.repository == 'nikships/muse-cli' && !cancelled() && needs.build.result == 'success' &&
       (needs.record-release.result == 'success' ||
        (needs.record-release.result == 'skipped' && startsWith(github.ref, 'refs/tags/v'))) }}
     runs-on: ubuntu-latest

@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Kahtaf fork
+
+- Working branch: `fix/agent-reliability`, based on upstream v0.3.9.
+- Install from this fork, not PyPI. `muse-cli update` retains the fork source.
+- This fork's version uses a local `+kahtaf.N` suffix. Do not run the upstream
+  release bump for a fork build. Automatic publishing jobs are upstream-only.
+- Cookie backups and staged cookie files are credentials too; keep them
+  private and outside the repository.
+
 ## Project overview
 
 `muse-cli` is a Python command-line client for a personal muse.ai AI agent. It
@@ -10,7 +19,7 @@ Noise-XX WebSocket to the user's personal VM, carrying protobuf envelopes.
 
 - Published on PyPI as `muse-cli`. The command is `muse-cli` (never `muse`,
   which clashes with Muse Code).
-- Python 3.10+. Runtime dependencies: `curl_cffi`, `noiseprotocol`,
+- Python 3.10+. Runtime dependencies: `curl_cffi>=0.17`, `noiseprotocol`,
   `protobuf`. Build backend: hatchling.
 - The gateway API is unversioned and reverse engineered. Read
   `docs/PROTOCOL.md` before touching `gateway.py`, and do not guess at crypto
