@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 import urllib.parse
 
@@ -229,7 +230,9 @@ def _browser_cookies():
             data = _browser_run(base + ["tab", "list", "--json"])
             tabs = data.get("tabs", []) if isinstance(data, dict) else []
             muse_tabs = [t for t in tabs
-                         if isinstance(t, dict) and "muse.ai" in (t.get("url") or "")
+                         if isinstance(t, dict)
+                         and urllib.parse.urlsplit(t.get("url") or "").scheme == "https"
+                         and urllib.parse.urlsplit(t.get("url") or "").hostname == "muse.ai"
                          and (t.get("id") or t.get("tabId"))]
             if not muse_tabs:
                 return None, "no muse.ai tab open in Chrome"
@@ -247,7 +250,8 @@ def _browser_cookies():
                     if isinstance(data.get(key), list):
                         raw = data[key]
                         break
-            jar = [c for c in raw if isinstance(c, dict) and "muse.ai" in (c.get("domain") or c.get("url") or "")]
+            jar = [c for c in raw if isinstance(c, dict)
+                   and (c.get("domain") or "").lower() in ("muse.ai", ".muse.ai")]
             return jar, None
         except RuntimeError as e:
             last_err = str(e)
@@ -297,8 +301,10 @@ def cmd_auth_export(args):
         if jar is None:
             _print_export_failure(err)
             sys.exit(1)
-    # Never clobber a working login with an empty or logged-out jar.
     now = time.time()
+    jar = [c for c in jar if (c.get("domain") or "").lower() in ("muse.ai", ".muse.ai")
+           and (float(c.get("expires") or 0) <= 0 or float(c["expires"]) > now)]
+    # Never clobber a working login with an empty or logged-out jar.
     if not any(c["name"] == "hatch_sess" and c.get("value")
                and (float(c.get("expires") or 0) <= 0 or float(c["expires"]) > now)
                for c in jar):
@@ -317,13 +323,17 @@ def cmd_auth_export(args):
             "TRUE" if c.get("secure") else "FALSE",
             str(int(c.get("expires", 0) or 0)), c["name"], c["value"],
         ]))
-    if os.path.exists(COOKIES_FILE):
-        os.replace(COOKIES_FILE, COOKIES_FILE + ".bak")
-    # Create the file at 0600 so the cookies are never readable by others,
-    # not even between the write and a later chmod.
-    fd = os.open(COOKIES_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write("\n".join(lines) + "\n")
+    fd, pending = tempfile.mkstemp(prefix=".cookies.", dir=os.path.dirname(COOKIES_FILE))
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        if os.path.exists(COOKIES_FILE):
+            os.chmod(COOKIES_FILE, 0o600)
+            os.replace(COOKIES_FILE, COOKIES_FILE + ".bak")
+        os.replace(pending, COOKIES_FILE)
+    finally:
+        if os.path.exists(pending):
+            os.unlink(pending)
     print(f"saved {len(jar)} muse.ai cookies to {COOKIES_FILE}"
           + (f" (from {source})" if source != "Chrome" else ""))
 
@@ -572,14 +582,8 @@ def cmd_send(args):
         # chat.history without session_id reads the main chat; with it, the
         # thread. Either way the scope matches where the reply will land.
         scope = {"session_id": args.thread} if args.thread else {}
-        baseline = 0
-        try:
-            h = gw.call_json("chat.history", body={"limit": 1, **scope})
-            evs = h.get("chat_events", [])
-            if evs:
-                baseline = max(e.get("seq", 0) for e in evs)
-        except (GatewayError, TimeoutError):
-            pass
+        h = gw.call_json("chat.history", body={"limit": 1, **scope})
+        baseline = max((e.get("seq", 0) for e in h.get("chat_events", [])), default=0)
         stream_sid = gw._open("chat.stream", body=params)
         if not args.wait:
             out({"sent": True, "stream": stream_sid,

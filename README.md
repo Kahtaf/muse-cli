@@ -1,3 +1,7 @@
+> Kahtaf's fork: install from `fix/agent-reliability` to keep the cookie-domain,
+> private-backup, reply-boundary, and response-completion fixes. Based on upstream
+> v0.3.9; identified as `0.3.9+kahtaf.1`.
+
 <div align="center">
 
 # muse-cli
@@ -35,19 +39,24 @@ and `muse-cli goals`, then reports back.
 ## Quick Start
 
 ```bash
-uv tool install muse-cli      # or: pipx install muse-cli   /   pip install muse-cli
+uv tool install 'git+https://github.com/Kahtaf/muse-cli.git@fix/agent-reliability'
 ```
 
 The command is `muse-cli`. The name `muse` belongs to Muse Code on many machines.
 
-Want the agent skill too? The installer sets up the CLI and copies the skill
+Want the agent skill too? This installs the skill bundled with the CLI
 to `~/.agents/skills/muse-cli`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikships/muse-cli/main/install.sh | bash
+muse-cli update --skill
 ```
 
-Upgrade with `muse-cli update`. It also refreshes the agent skill if you installed one (the skill ships inside the package, so it always matches the CLI). `muse-cli update --skill` refreshes or installs just the skill, with no package upgrade, which is handy after `pip` or `pipx` installs. In a terminal it also checks PyPI once a day and, when a newer release exists, prints that command on stderr. It does not upgrade itself. Set `MUSE_NO_UPDATE_CHECK=1` to silence the notice. The check stays quiet when output is piped or `CI` is set. Remove with `uv tool uninstall muse-cli`.
+Upgrade with `muse-cli update`. This fork upgrades from the fork's
+`fix/agent-reliability` branch and refreshes an installed agent skill. It does
+not check PyPI for update notices. `muse-cli update --skill` installs or refreshes
+only the bundled skill in `~/.agents/skills/muse-cli`. Link that directory into
+`~/.claude/skills/muse-cli` for Claude Code when needed. Remove the CLI with
+`uv tool uninstall muse-cli`.
 
 Logging in is a separate one-time step. On a Mac it is one command, run after
 you have logged in at https://muse.ai/ in your browser. Follow
@@ -86,6 +95,9 @@ It reads every profile of every supported browser and uses the one that is
 logged in to muse.ai. Pick one with `--browser chrome|brave|arc|edge|chromium`.
 Unreadable profiles are skipped if another profile has a usable login.
 Only cookies valid for `muse.ai` are exported, not subdomain-only cookies.
+Both direct reading and the agent-browser fallback enforce that host boundary.
+New cookie files and backups are private (mode 0600); writes are staged before
+the existing login is replaced.
 Expired cookies are ignored, and an empty or expired `hatch_sess` never
 replaces your saved login. If the cookie database keeps changing during the
 read, close the browser and retry.
@@ -215,6 +227,12 @@ muse-cli raw <method> --body '{}'                 # escape hatch: any of 258 gat
 The interactive chat prints plain text, one message per line, so it works well
 with screen readers. It resumes the conversation you used last; type `/help`
 inside it for `/chats`, `/open N`, `/main`, `/new`, `/history`, and `/login`.
+
+`send` aborts before dispatch if its initial history read fails, so it cannot
+mistake an old response for the new answer after that failure. Use a dedicated
+side chat per workflow; avoid overlapping sends in the same chat because the
+gateway's history does not reliably correlate each assistant message to a request.
+Incomplete gateway bodies raise a timeout; partial downloads are not published.
 
 Every other command prints JSON. Your VM is auto-discovered from your session, and a
 random device id is generated on first run.

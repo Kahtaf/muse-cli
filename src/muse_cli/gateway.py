@@ -15,6 +15,7 @@ import queue as queue_mod
 
 from curl_cffi import requests as rq
 from curl_cffi.requests import WebSocket
+from curl_cffi.requests.websockets import WebSocketTimeout
 from noise.connection import NoiseConnection, Keypair
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
@@ -137,10 +138,15 @@ def load_cookies(path):
     # Netscape cookie-jar format
     parts = []
     for line in raw.splitlines():
+        if line.startswith("#HttpOnly_"):
+            line = line[len("#HttpOnly_"):]
         if not line or line.startswith("#"):
             continue
         cols = line.split("\t")
-        if len(cols) >= 7:
+        if len(cols) >= 7 and cols[0].lower() in ("muse.ai", ".muse.ai"):
+            expires = float(cols[4])
+            if expires > 0 and expires <= time.time():
+                continue
             parts.append(f"{cols[5]}={cols[6]}")
     if not parts:
         raise AuthError(f"could not parse cookies file {path}")
@@ -186,7 +192,11 @@ class Gateway:
         noise.set_keypair_from_private_bytes(Keypair.STATIC, os.urandom(32))
         noise.start_handshake()
         self.ws.send_bytes(bytes(noise.write_message(b"")))
-        m2, _ = self.ws.recv()
+        try:
+            m2, _ = self.ws.recv(timeout=20)
+        except WebSocketTimeout:
+            self.ws.close()
+            raise TimeoutError("gateway handshake timed out") from None
         noise.read_message(bytes(m2))
         self.ws.send_bytes(bytes(noise.write_message(b"")))
         assert noise.handshake_finished
@@ -205,7 +215,7 @@ class Gateway:
         with self._send_lock:
             self.ws.send_bytes(bytes(self.noise.encrypt(fr.SerializeToString())))
 
-    def _read_frame(self):
+    def _read_frame(self, deadline=None):
         # Serialized so two threads can never interleave ws.recv / Noise
         # decrypt (which corrupts the transport state -> BAD_DECRYPT).
         # Callers must still avoid *logical* races: only one thread should
@@ -215,7 +225,13 @@ class Gateway:
             # several transport frames sharing a chunk_id; only the joined
             # payload is a ServiceResponse. Keep reading until it is whole.
             while True:
-                data, _flags = self.ws.recv()
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError("gateway response timed out")
+                try:
+                    data, _flags = self.ws.recv(timeout=remaining)
+                except WebSocketTimeout:
+                    raise TimeoutError("gateway response timed out") from None
                 pt = bytes(self.noise.decrypt(bytes(data)))
                 ntf = NoiseTransportFrame()
                 ntf.ParseFromString(pt)
@@ -267,9 +283,10 @@ class Gateway:
         if route["http"] == "GET" and body is not None and query is None:
             query, body = body, None
         sid = self._open(method, path_params, body, query, route=route)
-        status, chunks, deadline = None, [], time.time() + timeout
-        while time.time() < deadline:
-            sf = self._read_frame()
+        status, chunks, deadline = None, [], time.monotonic() + timeout
+        complete = False
+        while time.monotonic() < deadline:
+            sf = self._read_frame(deadline=deadline)
             if sf.stream_id != sid:
                 continue
             kind = sf.WhichOneof("kind")
@@ -278,15 +295,19 @@ class Gateway:
                 if sf.response.body:
                     chunks.append(bytes(sf.response.body))
                 if sf.response.end_body:
+                    complete = True
                     break
             elif kind == "body_chunk":
                 chunks.append(bytes(sf.body_chunk.data))
                 if sf.body_chunk.end_body:
+                    complete = True
                     break
             elif kind == "reset":
                 raise GatewayError(-1, f"stream reset {sf.reset.code}: {sf.reset.reason}")
         if status is None:
             raise TimeoutError(f"no response for {method}")
+        if not complete:
+            raise TimeoutError(f"incomplete response for {method}")
         payload = b"".join(chunks)
         if status < 200 or status >= 300:
             raise GatewayError(status, payload[:500].decode("utf-8", "replace"))

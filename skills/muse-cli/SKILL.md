@@ -5,11 +5,10 @@ description: Manage a personal muse.ai agent from the terminal (send messages, r
 
 # muse-cli: drive a muse.ai personal agent from the terminal
 
-Assume a bare machine: only this skill is present. No repo clone, no
-dependencies, no auth. Work top to bottom; stop at the first step that
-fails and report it.
+Check for the installed CLI and working authentication before installing or
+exporting cookies. This skill ships with Kahtaf's fork of muse-cli.
 
-The `muse-cli` package (on PyPI) talks to the muse.ai personal gateway
+The `muse-cli` package talks to the muse.ai personal gateway
 directly. No browser needed after the one-time cookie export. Every command
 prints JSON except the interactive chat (`muse-cli` with no arguments, or
 `muse-cli chat`), which is a human REPL. Agents should never run it.
@@ -17,13 +16,14 @@ prints JSON except the interactive chat (`muse-cli` with no arguments, or
 ## 1. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nikships/muse-cli/main/install.sh | bash
+command -v muse-cli && muse-cli --version
+# Only when missing:
+uv tool install 'git+https://github.com/Kahtaf/muse-cli.git@fix/agent-reliability'
 ```
 
-This installs the CLI from PyPI with `uv tool install muse-cli` (its own
-isolated environment) and this skill (to `~/.agents/skills/muse-cli`). CLI
-only? `uv tool install muse-cli`, `pipx install muse-cli`, or
-`pip install muse-cli` all work. The command is `muse-cli` (`muse` clashes
+This installs the fork in its own isolated environment. Do not replace it
+with the upstream PyPI package, which lacks the local fixes. Install or refresh
+the bundled skill with `muse-cli update --skill`. The command is `muse-cli` (`muse` clashes
 with Muse Code, don't use it). Verify before continuing:
 
 ```bash
@@ -42,7 +42,8 @@ with `auth error`, the cookies expired: repeat this step.
 
 Needs no Node.js and no debugging port. The user must be logged in at
 https://muse.ai/ in Chrome, Brave, Arc, Edge or Chromium (any profile; the
-browser can be closed). Ask them to confirm, then:
+browser can be closed). If `muse-cli status` already works, reuse that login.
+When the user has said Chrome is logged in, export directly:
 
 ```bash
 muse-cli auth export
@@ -202,6 +203,12 @@ only for methods with no wrapper.
   than the wait: the message still landed, confirm with `history`. The reply
   is matched as a genuine answer, not background chatter.
 - `send --wait 0` is fire-and-forget (no polling).
+- A failed pre-send history read aborts before sending. Retry after the read
+  failure is resolved. Use a dedicated side chat for each workflow and avoid
+  overlapping sends in the same thread; the gateway has no reliable reply ID
+  tying each assistant message to a particular request.
+- An incomplete gateway body raises a timeout instead of returning partial
+  data. Receive timeouts use the remaining request deadline.
 - `send --download DIR` keeps waiting after the reply until the thread has been
   quiet for 15 s (so it always takes at least that long), because generated
   images and videos arrive as separate messages after the text. The wait stops
@@ -222,8 +229,6 @@ only for methods with no wrapper.
   don't guess at crypto or framing.
 - Respect rate limits. Writes (send, react, execute, session ops) act as the
   user in their agent: announce them before running, never loop them.
-- A stderr line `A new release of muse-cli is available` is an upgrade
-  notice, not a failed command. Upgrade with `muse-cli update`, which also refreshes this skill
-  (`muse-cli update --skill` refreshes only the skill). The check
-  runs at most once a day, only in a terminal, and never changes the install
-  by itself. `MUSE_NO_UPDATE_CHECK=1` silences it.
+- Upgrade with `muse-cli update`, which reinstalls from Kahtaf's
+  `fix/agent-reliability` branch and refreshes this skill. PyPI update notices
+  are disabled for this fork. `muse-cli update --skill` refreshes only the skill.
