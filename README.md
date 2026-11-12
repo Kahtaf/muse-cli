@@ -23,9 +23,10 @@ https://github.com/user-attachments/assets/8c9aefe8-c5a4-4e4b-9393-48e2325f99a9
 
 A command-line client for your personal muse.ai AI agent: chat from the terminal, automate it with scripts, and manage side chats, feed, goals, ideas, and sessions without opening a browser. It speaks the app's own gateway protocol directly: HTTPS auth, then an encrypted Noise-XX WebSocket to your personal VM.
 
+- **A full-screen app:** `muse-cli` opens a chat app built on [OpenTUI](https://github.com/anomalyco/opentui), with your chats, feed, goals, ideas, tasks, mail and files a keystroke away.
 - **Chat from the shell:** send a message and get the agent's reply back as JSON.
 - **Script it:** every command prints JSON, so it pipes into `jq`, cron jobs, and other AI agents.
-- **Full coverage:** named commands for the common tasks, plus a `raw` escape hatch for all 258 gateway methods.
+- **Full coverage:** named commands for the common tasks, plus a `raw` escape hatch for all 402 gateway methods.
 - **Agent-ready:** ships an agent skill so coding agents can drive your muse.ai agent for you.
 
 ## Agents driving agents
@@ -195,7 +196,9 @@ muse-cli status
 ## Usage
 
 ```bash
-muse-cli                                          # interactive chat (same as `muse-cli chat`)
+muse-cli                                          # full-screen app on a terminal with Bun, else the plain chat
+muse-cli tui                                      # the full-screen app (`--demo`: made-up data, no account)
+muse-cli chat                                     # plain line-by-line chat
 muse-cli auth export --browser auto               # import the browser login (macOS: direct read)
 muse-cli threads                                  # main chat + side chats
 muse-cli history --limit 5                        # recent messages
@@ -216,17 +219,56 @@ muse-cli goals                                    # one goal: muse-cli goal <id>
 muse-cli ideas                                    # one idea: muse-cli idea <id>
 muse-cli idea-exec <idea-id>                      # agent acts on the idea
 
+muse-cli tasks                                    # scheduled tasks (reminders, recurring jobs)
+muse-cli task-runs --job <task-id> --limit 5      # recent runs, all tasks without --job
+muse-cli task-run <task-id>                       # run a scheduled task now
+muse-cli voices --gender F --accent British       # voice catalog; also --search, --tone
+muse-cli voice                                    # the agent's current voice
+muse-cli email                                    # Muse Mail: mailbox + threads (--cursor for more)
+muse-cli email-thread <thread-id>                 # messages in a thread; also email-message <id>
+muse-cli email-attachment <message-id> 0 -o ./out # save attachment number 0
+muse-cli peers                                    # Trusted Network status and connected agents
+muse-cli export-data -o ./out                     # download all your agent's data as a ZIP
+
 muse-cli session-start --title "trip planning"    # new side chat
 muse-cli session-rename <id> "new title"
 muse-cli session-archive <id>                     # also: pin, unpin, unarchive, delete
 muse-cli seen <thread-id>
 muse-cli wake
-muse-cli raw <method> --body '{}'                 # escape hatch: any of 258 gateway methods
+muse-cli raw <method> --body '{}'                 # escape hatch: any of 402 gateway methods
 ```
 
-The interactive chat prints plain text, one message per line, so it works well
+### The full-screen app
+
+![The muse-cli full-screen app in demo mode](https://raw.githubusercontent.com/nikships/muse-cli/main/assets/tui.png)
+
+On a terminal, `muse-cli` opens a full-screen app built on
+[OpenTUI](https://github.com/anomalyco/opentui). It needs
+[Bun](https://bun.sh) 1.3.14 or later; `muse-cli tui` offers to install it.
+The first run copies the app to `~/.cache/muse-cli/tui` and installs its
+dependencies, which takes a few seconds once per release.
+
+- Replies stream in as they arrive, with Markdown, code blocks and file chips.
+  Press Enter on a file to save it to `~/Downloads/muse`.
+- Your chats sit on the left. `Tab` moves between them and the message box,
+  `Ctrl+N` starts a side chat.
+- `Ctrl+K` jumps to any chat, space or action. `Alt+1` to `Alt+7` open Chat,
+  Feed, Goals, Ideas, Tasks, Mail and Files. Type `/` for commands, `F1` for
+  every shortcut.
+- `Ctrl+C` clears the message box, and quits when it is empty.
+
+`muse-cli tui --demo` runs it on made-up data and never contacts muse.ai.
+Set `MUSE_CLI_UI=plain` to make bare `muse-cli` open the plain chat instead.
+Without Bun, or when stdin or stdout is not a terminal, `muse-cli` opens the
+plain chat. Problems are logged to `~/.config/muse-cli/tui.log`.
+
+### The plain chat
+
+`muse-cli chat` prints plain text, one message per line, so it works well
 with screen readers. It resumes the conversation you used last; type `/help`
 inside it for `/chats`, `/open N`, `/main`, `/new`, `/history`, and `/login`.
+Any command above can also be run with a leading slash (`/status`, `/goals`,
+`/files`, etc.) with `<TAB>` auto-completion.
 
 `send` aborts before dispatch if its initial history read fails, so it cannot
 mistake an old response for the new answer after that failure. Use a dedicated
@@ -236,6 +278,12 @@ Incomplete gateway bodies raise a timeout; partial downloads are not published.
 
 Every other command prints JSON. Your VM is auto-discovered from your session, and a
 random device id is generated on first run.
+
+Some features are rolled out per account. When yours does not have one, the
+command exits with a gateway error that names it, for example
+`email_not_enabled` for Muse Mail. `peers` reports when the Trusted Network is
+turned off instead of failing. `export-data` streams the ZIP to disk (the
+server picks the file name), so a large agent does not need the memory.
 
 Pipe it into other tools:
 
@@ -259,7 +307,7 @@ found during reverse engineering.
 |----------|-------------|
 | [skills/muse-cli/SKILL.md](https://github.com/nikships/muse-cli/blob/main/skills/muse-cli/SKILL.md) | Agent skill: install check, auth setup, command reference |
 | [docs/PROTOCOL.md](https://github.com/nikships/muse-cli/blob/main/docs/PROTOCOL.md) | Gateway protocol reference: auth chain, Noise transport, framing, method quirks |
-| [routes.json](https://github.com/nikships/muse-cli/blob/main/src/muse_cli/routes.json) | All 258 gateway methods with paths and services |
+| [routes.json](https://github.com/nikships/muse-cli/blob/main/src/muse_cli/routes.json) | All 402 gateway methods with paths and services |
 | `muse-cli raw --help` | Escape hatch for calling any gateway method directly |
 
 ## Development
@@ -269,23 +317,30 @@ git clone https://github.com/nikships/muse-cli.git
 cd muse-cli
 uv run muse-cli --help
 uv run python -m unittest discover -s tests   # unit tests (no network)
+cd src/muse_cli/tui && bun install && bun test && bunx tsc --noEmit   # app tests
+MUSE_CLI_TUI_DIR=$PWD uv run muse-cli tui --demo   # run the app from the checkout
 ```
 
 ```
 muse-cli/
-assets/              README artwork (generated with Muse Image)
+assets/              README artwork (generated with Muse Image) and app screenshots
 docs/PROTOCOL.md     protocol reference for re-derivation
-scripts/             release version bump (used by CI)
+docs/TUI.md          the full-screen app and its bridge protocol
+scripts/             release version bump (used by CI), route table extractor
 site/                landing page (Firebase Hosting)
 skills/muse-cli/     agent skill
 src/muse_cli/
   cli.py             argument parsing and all commands
-  chat.py            interactive chat (the default command)
+  chat.py            plain interactive chat (`muse-cli chat`)
+  tui.py             launches the full-screen app (finds Bun, caches the app)
+  tui/               the full-screen app: TypeScript on OpenTUI and Bun
+  bridge.py          JSON-lines bridge the app talks to muse.ai through
+  demo.py            made-up data for `muse-cli tui --demo`
   browsers.py        reads the muse.ai login from Chromium browsers on macOS
   gateway.py         gateway client (auth, Noise transport, subscriptions)
   update.py          daily update notice and `muse-cli update`
   skill.py           installs and refreshes the bundled agent skill
-  routes.json        258 gateway methods extracted from the web client
+  routes.json        402 gateway methods extracted from the web client
   desc0.bin          protobuf descriptors for the wire framing
   desc1.bin
 tests/               unit tests (no network)

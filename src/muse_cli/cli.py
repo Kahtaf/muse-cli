@@ -441,6 +441,8 @@ def event_resources(ev):
         if isinstance(val, list):
             for item in val:
                 add(item, key.rstrip("s"))
+        elif isinstance(val, dict) and val.get("path"):
+            add(val, key)
     for src in (ev.get("resources"), p.get("resources")):
         for item in src or []:
             add(item, "resource")
@@ -494,16 +496,20 @@ def _history_events(gw, thread, limit):
     return gw.call_json("chat.history", body=params).get("chat_events", [])
 
 
+def file_rows(events):
+    rows = []
+    for ev in events:
+        p = ev.get("payload", {}) if isinstance(ev.get("payload"), dict) else {}
+        for r in event_resources(ev):
+            rows.append({"seq": ev.get("seq"),
+                         "message_id": p.get("message_id") or ev.get("message_id"), **r})
+    return rows
+
+
 def cmd_files(args):
     gw = connect(load_config())
     try:
-        rows = []
-        for ev in _history_events(gw, args.thread, args.limit):
-            p = ev.get("payload", {}) if isinstance(ev.get("payload"), dict) else {}
-            for r in event_resources(ev):
-                rows.append({"seq": ev.get("seq"),
-                             "message_id": p.get("message_id") or ev.get("message_id"), **r})
-        out(rows)
+        out(file_rows(_history_events(gw, args.thread, args.limit)))
     finally:
         gw.close()
 
@@ -685,20 +691,25 @@ def cmd_watch(args):
         gw.close()
 
 
+def feed_units(d):
+    for day in d.get("days", []):
+        for ed in day.get("editions", []):
+            for u in ed.get("units", []):
+                yield day, ed, u
+
+
+def feed_row(day, ed, u):
+    return {"id": u.get("unit_id"), "title": u.get("title"),
+            "date": day.get("local_date"), "edition": ed.get("kind")}
+
+
 def cmd_feed(args):
     gw = connect(load_config())
     try:
         d = gw.call_json("feed.list", query={"limit": args.limit} if args.limit else None)
         if args.raw:
             out(d); return
-        rows = []
-        for day in d.get("days", []):
-            for ed in day.get("editions", []):
-                for u in ed.get("units", []):
-                    rows.append({"id": u.get("unit_id"),
-                                 "title": u.get("title"),
-                                 "date": day.get("local_date"),
-                                 "edition": ed.get("kind")})
+        rows = [feed_row(day, ed, u) for day, ed, u in feed_units(d)]
         out(rows[:args.limit] if args.limit else rows)
     finally:
         gw.close()
@@ -729,13 +740,16 @@ def cmd_feed_prompt(_args):
         gw.close()
 
 
+def goal_row(g):
+    return {"id": g.get("id") or g.get("goal_id"), "title": g.get("title"),
+            "status": g.get("status"), "subtitle": g.get("subtitle")}
+
+
 def cmd_goals(_args):
     gw = connect(load_config())
     try:
         d = gw.call_json("goals.list")
-        out([{"id": g.get("id") or g.get("goal_id"), "title": g.get("title"),
-              "status": g.get("status"), "subtitle": g.get("subtitle")}
-             for g in d.get("goals", [])])
+        out([goal_row(g) for g in d.get("goals", [])])
     finally:
         gw.close()
 
@@ -748,16 +762,22 @@ def cmd_goal(args):
         gw.close()
 
 
+def idea_cards(d):
+    for s in d.get("sections", []):
+        for c in s.get("cards", s.get("ideas", [])):
+            yield s, c
+
+
+def idea_row(s, c):
+    return {"id": c.get("id") or c.get("ideaCardId"),
+            "title": c.get("title"), "section": s.get("title")}
+
+
 def cmd_ideas(_args):
     gw = connect(load_config())
     try:
         d = gw.call_json("api.idea-cards.list")
-        rows = []
-        for s in d.get("sections", []):
-            for c in s.get("cards", s.get("ideas", [])):
-                rows.append({"id": c.get("id") or c.get("ideaCardId"),
-                             "title": c.get("title"), "section": s.get("title")})
-        out(rows)
+        out([idea_row(s, c) for s, c in idea_cards(d)])
     finally:
         gw.close()
 
@@ -780,6 +800,243 @@ def cmd_idea_exec(args):
     finally:
         gw.close()
 
+
+def _when(ts):
+    """Local 'YYYY-MM-DD HH:MM' for a unix time in seconds or milliseconds."""
+    if not isinstance(ts, (int, float)) or ts <= 0:
+        return None
+    if ts > 1e11:
+        ts = ts / 1000
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def task_row(s):
+    return {"id": s.get("id"), "title": s.get("title"), "mode": s.get("mode"),
+            "enabled": s.get("enabled"), "schedule": s.get("schedule_key"),
+            "next_run": _when(s.get("next_run_at_utc")), "timezone": s.get("timezone")}
+
+
+def task_run_row(r):
+    return {"run_id": r.get("run_id"), "job_id": r.get("job_id"), "status": r.get("status"),
+            "trigger": r.get("trigger_reason"), "scheduled": _when(r.get("scheduled_for_utc")),
+            "summary": r.get("result_summary"), "error": r.get("error_text")}
+
+
+def cmd_tasks(args):
+    gw = connect(load_config())
+    try:
+        d = gw.call_json("tasks.list")
+        if args.raw:
+            out(d); return
+        out([task_row(s) for s in d.get("schedules", [])])
+    finally:
+        gw.close()
+
+
+def cmd_task_runs(args):
+    gw = connect(load_config())
+    try:
+        body = {"limit": args.limit}
+        if args.job:
+            body["job_id"] = args.job
+        d = gw.call_json("tasks.runs", body=body)
+        if args.raw:
+            out(d); return
+        out([task_run_row(r) for r in d.get("runs", [])])
+    finally:
+        gw.close()
+
+
+def cmd_task_run(args):
+    gw = connect(load_config())
+    try:
+        out(gw.call_json("tasks.run", path_params={"job_id": args.id}, body={"job_id": args.id}))
+    finally:
+        gw.close()
+
+
+def cmd_voices(args):
+    gw = connect(load_config())
+    try:
+        query = {"source": "library", "limit": args.limit, "offset": args.offset}
+        if args.search:
+            query["query"] = args.search
+        for key in ("gender", "accent", "tone"):
+            if getattr(args, key):
+                query[key] = [getattr(args, key)]
+        d = gw.call_json("voice.catalog", query=query)
+        if args.raw:
+            out(d); return
+        out({"total": d.get("total"), "offset": d.get("offset"), "current": d.get("current"),
+             "voices": [{"id": v.get("id"), "name": v.get("name"),
+                         "description": v.get("description"), "selected": v.get("is_selected")}
+                        for v in d.get("voices", [])]})
+    finally:
+        gw.close()
+
+
+def cmd_voice(_args):
+    gw = connect(load_config())
+    try:
+        out(gw.call_json("voice.active_voice"))
+    finally:
+        gw.close()
+
+
+def _email_message(m):
+    who = m.get("header_from")
+    if m.get("header_from_name") and who:
+        who = f"{m['header_from_name']} <{who}>"
+    return {"id": m.get("id"), "thread_id": m.get("thread_id"), "direction": m.get("direction"),
+            "from": who, "to": m.get("header_to"), "cc": m.get("header_cc"),
+            "subject": m.get("subject"), "date": _when(m.get("created_at")),
+            "text": m.get("text_body") or m.get("extracted_text") or m.get("preview") or "",
+            "authentication": (m.get("sender_authentication") or {}).get("verdict"),
+            "attachments": [{"index": a.get("index", i), "filename": a.get("filename"),
+                             "mime": a.get("mime_type"), "size": a.get("size")}
+                            for i, a in enumerate(m.get("attachments") or [])
+                            if isinstance(a, dict)]}
+
+
+def email_thread_row(t):
+    last = t.get("last_message") or {}
+    return {"id": t.get("id"), "subject": t.get("subject"),
+            "messages": t.get("message_count"), "participants": t.get("participants"),
+            "last_from": last.get("header_from"), "last_date": _when(last.get("created_at")),
+            "preview": last.get("preview")}
+
+
+def cmd_email(args):
+    gw = connect(load_config())
+    try:
+        mailbox = gw.call_json("email.mailbox.get")
+        d = gw.call_json("email.threads.list", body={"cursor": args.cursor} if args.cursor else {})
+        if args.raw:
+            out({"mailbox": mailbox, "threads": d}); return
+        rows = [email_thread_row(t) for t in d.get("data", [])]
+        out({"mailbox": mailbox, "threads": rows,
+             "next_cursor": ((d.get("paging") or {}).get("cursors") or {}).get("after")})
+    finally:
+        gw.close()
+
+
+def cmd_email_thread(args):
+    gw = connect(load_config())
+    try:
+        d = gw.call_json("email.threads.get", path_params={"thread_id": args.id})
+        if args.raw:
+            out(d); return
+        out([_email_message(m) for m in d.get("messages", []) if isinstance(m, dict)])
+    finally:
+        gw.close()
+
+
+def cmd_email_message(args):
+    gw = connect(load_config())
+    try:
+        d = gw.call_json("email.messages.get", path_params={"message_id": args.id})
+        out(d if args.raw else _email_message(d.get("message", d)))
+    finally:
+        gw.close()
+
+
+def cmd_email_attachment(args):
+    import base64
+    gw = connect(load_config())
+    try:
+        d = gw.call_json("email.attachment.get",
+                         path_params={"message_id": args.message, "index": args.index})
+    finally:
+        gw.close()
+    if not d.get("content_base64"):
+        raise GatewayError(-1, "attachment response carried no content")
+    meta = d.get("metadata") or {}
+    name = meta.get("filename") or d.get("filename") or f"attachment-{args.index}"
+    dest = _local_name(name, args.output)
+    if os.path.exists(dest) and not args.force:
+        out({"file": os.path.abspath(dest), "skipped": "exists"}); return
+    data = base64.b64decode(d["content_base64"])
+    os.makedirs(args.output, exist_ok=True)
+    with open(dest, "wb") as fh:
+        fh.write(data)
+    out({"file": os.path.abspath(dest), "bytes": len(data),
+         "mime": meta.get("mime_type") or d.get("mime_type")})
+
+
+def cmd_peers(args):
+    gw = connect(load_config())
+    try:
+        st = gw.call_json("peers.status")
+        if args.raw:
+            out(st); return
+        res = {"muse_id": (st.get("identity") or {}).get("muse_id"),
+               "supported": st.get("supported"), "availability": st.get("availability"),
+               "features": sorted(k for k, v in (st.get("features") or {}).items() if v)}
+        if st.get("availability") == "disabled":
+            res["note"] = "Trusted Network (peer connections) is turned off for this agent"
+        else:
+            try:
+                res["peers"] = gw.call_json("peers.list", body={"limit": args.limit})
+            except GatewayError as e:
+                res["peers_error"] = str(e)
+        out(res)
+    finally:
+        gw.close()
+
+
+_FILENAME_RE = re.compile(r"filename\*?\s*=\s*(?:UTF-8'[^']*')?\"?([^\";]+)", re.I)
+
+
+def _export_name(headers):
+    m = _FILENAME_RE.search(headers.get("content-disposition", ""))
+    name = os.path.basename(urllib.parse.unquote(m.group(1)).strip()) if m else ""
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip(". ") or "Agent Data.zip"
+    return name if name.lower().endswith(".zip") else name + ".zip"
+
+
+def cmd_export_data(args):
+    target = args.output
+    to_dir = os.path.isdir(target) or target.endswith(("/", os.sep))
+    if not to_dir and os.path.exists(target) and not args.force:
+        print(f"{target} exists; pass -f to overwrite", file=sys.stderr)
+        sys.exit(2)
+    directory = target if to_dir else (os.path.dirname(target) or ".")
+    os.makedirs(directory, exist_ok=True)
+    part = os.path.join(directory, ".muse-cli-export.part")
+    show = sys.stderr.isatty()
+    last = [0.0]
+
+    def progress(n):
+        if show and time.time() - last[0] > 0.5:
+            last[0] = time.time()
+            print(f"\rdownloaded {n / 1e6:.1f} MB", end="", file=sys.stderr, flush=True)
+
+    print("Preparing your data export; large agents can take a few minutes...", file=sys.stderr)
+    gw = connect(load_config())
+    try:
+        with open(part, "wb") as fh:
+            headers = gw.request_to(fh, "dyi.export", timeout=args.timeout, on_progress=progress)
+    except BaseException:
+        if os.path.exists(part):
+            os.remove(part)
+        raise
+    finally:
+        gw.close()
+        if show:
+            print(file=sys.stderr)
+    size = os.path.getsize(part)
+    ctype = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    expected = headers.get("content-length")
+    if ctype != "application/zip" or (expected and expected.isdigit() and int(expected) != size):
+        os.remove(part)
+        raise GatewayError(-1, f"data export was not a complete ZIP (content-type {ctype!r}, "
+                               f"{size} of {expected or '?'} bytes)")
+    dest = os.path.join(directory, _export_name(headers)) if to_dir else target
+    if os.path.exists(dest) and not args.force:
+        stem, ext = os.path.splitext(dest)
+        dest = f"{stem} {time.strftime('%Y%m%d-%H%M%S')}{ext}"
+    os.replace(part, dest)
+    out({"file": os.path.abspath(dest), "bytes": size})
 
 def cmd_unread(_args):
     gw = connect(load_config())
@@ -822,15 +1079,19 @@ def cmd_session_start(args):
         gw.close()
 
 
+def session_op(gw, kind, session_id, title=None):
+    if kind == "rename":
+        body = {"session_id": session_id, "title": title}
+    else:
+        body = {"method": f"/api/session/{kind}", "session_id": session_id}
+    return gw.call_json(f"session.{kind}", body=body)
+
+
 def cmd_session_op(kind):
     def run(args):
         gw = connect(load_config())
         try:
-            if kind == "rename":
-                body = {"session_id": args.id, "title": args.title}
-            else:
-                body = {"method": f"/api/session/{kind}", "session_id": args.id}
-            out(gw.call_json(f"session.{kind}", body=body))
+            out(session_op(gw, kind, args.id, getattr(args, "title", None)))
         finally:
             gw.close()
     return run
@@ -884,7 +1145,16 @@ def _chat(args):
     cmd_chat(args)
 
 
-def main():
+def cmd_tui(args):
+    from . import tui
+    demo = getattr(args, "demo", False) or os.environ.get("MUSE_CLI_DEMO") == "1"
+    code = tui.launch(args, demo=demo, bun=getattr(args, "bun", None),
+                      ask=getattr(args, "ask", True))
+    if code:
+        sys.exit(code)
+
+
+def build_parser():
     ap = argparse.ArgumentParser(prog="muse-cli", description="CLI for your personal muse.ai agent")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = ap.add_subparsers(dest="cmd")
@@ -932,7 +1202,15 @@ def main():
                         "Chromium browser on macOS, else agent-browser)")
     p.set_defaults(fn=cmd_auth_export)
 
-    sub.add_parser("chat", help="interactive chat (the default with no command)").set_defaults(fn=_chat)
+    sub.add_parser("chat", help="plain line-by-line chat (the default with no command "
+                   "when the full-screen app can't run)").set_defaults(fn=_chat)
+    p = sub.add_parser("tui", help="full-screen app (OpenTUI); `chat` is the plain version",
+                       description="Full-screen app built on OpenTUI. Needs Bun 1.3.14 or later "
+                                   "(offers to install it). Bare `muse-cli` opens it on a terminal "
+                                   "when Bun is there; set MUSE_CLI_UI=plain to keep the plain chat.")
+    p.add_argument("--demo", action="store_true",
+                   help="made-up data for screenshots; never touches muse.ai")
+    p.set_defaults(fn=cmd_tui)
     sub.add_parser("status", help="VM, session count, unread, identity").set_defaults(fn=cmd_status)
     p = sub.add_parser("threads", help="list chats and side chats")
     p.add_argument("--all", dest="archived", action="store_true", help="include archived")
@@ -982,6 +1260,47 @@ def main():
     p.add_argument("--thread", default=None,
                    help="side chat to run it in (the server may ignore this and use the main chat)")
     p.set_defaults(fn=cmd_idea_exec)
+    p = sub.add_parser("tasks", help="list scheduled tasks (reminders, recurring jobs)")
+    p.add_argument("--raw", action="store_true"); p.set_defaults(fn=cmd_tasks)
+    p = sub.add_parser("task-runs", help="recent runs of scheduled tasks")
+    p.add_argument("--job", default=None, help="only runs of this task id")
+    p.add_argument("--limit", type=int, default=10); p.add_argument("--raw", action="store_true")
+    p.set_defaults(fn=cmd_task_runs)
+    p = sub.add_parser("task-run", help="run a scheduled task now (agent does the work)")
+    p.add_argument("id", help="task id from `tasks`"); p.set_defaults(fn=cmd_task_run)
+    p = sub.add_parser("voices", help="browse the voice catalog")
+    p.add_argument("--search", default=None, help="free-text search (name, accent, tone)")
+    p.add_argument("--gender", default=None, choices=["F", "M", "N"])
+    p.add_argument("--accent", default=None, help="e.g. American, British, Indian")
+    p.add_argument("--tone", default=None, help="e.g. Warm, Friendly, Calm")
+    p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--raw", action="store_true"); p.set_defaults(fn=cmd_voices)
+    sub.add_parser("voice", help="show the agent's current voice").set_defaults(fn=cmd_voice)
+    p = sub.add_parser("email", help="the agent's Muse Mail inbox: mailbox and threads")
+    p.add_argument("--cursor", default=None, help="next_cursor from a previous page")
+    p.add_argument("--raw", action="store_true"); p.set_defaults(fn=cmd_email)
+    p = sub.add_parser("email-thread", help="read one Muse Mail thread")
+    p.add_argument("id"); p.add_argument("--raw", action="store_true")
+    p.set_defaults(fn=cmd_email_thread)
+    p = sub.add_parser("email-message", help="read one Muse Mail message")
+    p.add_argument("id"); p.add_argument("--raw", action="store_true")
+    p.set_defaults(fn=cmd_email_message)
+    p = sub.add_parser("email-attachment", help="save a Muse Mail attachment")
+    p.add_argument("message", help="message id"); p.add_argument("index", type=int,
+                   help="attachment index from email-thread / email-message")
+    p.add_argument("-o", "--output", default=".", help="directory to save into (default .)")
+    p.add_argument("-f", "--force", action="store_true", help="overwrite an existing file")
+    p.set_defaults(fn=cmd_email_attachment)
+    p = sub.add_parser("peers", help="Trusted Network status and connected Muse agents")
+    p.add_argument("--limit", type=int, default=50); p.add_argument("--raw", action="store_true")
+    p.set_defaults(fn=cmd_peers)
+    p = sub.add_parser("export-data", help="download all your agent's data as a ZIP")
+    p.add_argument("-o", "--output", default=".",
+                   help="directory (file name comes from the server) or .zip path (default .)")
+    p.add_argument("-f", "--force", action="store_true", help="overwrite an existing file")
+    p.add_argument("--timeout", type=int, default=None,
+                   help="seconds to wait (default: the web app's limit, 65 minutes)")
+    p.set_defaults(fn=cmd_export_data)
     sub.add_parser("unread", help="unread counts").set_defaults(fn=cmd_unread)
     p = sub.add_parser("seen", help="mark a thread seen"); p.add_argument("thread")
     p.set_defaults(fn=cmd_seen)
@@ -1003,11 +1322,22 @@ def main():
     p = sub.add_parser("raw", help="call any gateway method (escape hatch)")
     p.add_argument("method"); p.add_argument("--body", default=None)
     p.add_argument("--param", action="append", default=[], help="path param k=v (repeatable)")
-    p.add_argument("--timeout", type=int, default=30); p.set_defaults(fn=cmd_raw)
+    p.add_argument("--timeout", type=int, default=None,
+                   help="seconds to wait (default: the method's own limit, else 30)")
+    p.set_defaults(fn=cmd_raw)
+    return ap
 
-    args = ap.parse_args()
+
+def main(argv=None):
+    ap = build_parser()
+    args = ap.parse_args(argv)
     if args.cmd is None:
-        args.cmd, args.fn = "chat", _chat
+        from . import tui
+        bun = tui.should_open()
+        if bun:
+            args.cmd, args.fn, args.bun, args.ask = "tui", cmd_tui, bun, False
+        else:
+            args.cmd, args.fn = "chat", _chat
     # A piped command prints JSON. The notice stays off unless both streams
     # are a terminal, and `update` is already doing the upgrade.
     notice = None if args.cmd == "update" else start_update_check()

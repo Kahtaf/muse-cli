@@ -43,7 +43,8 @@ chat / feed / goals / ideas / sessions / ...
 - **Request:** `ServiceRequest{service, payload =
   ServiceFrame{stream_id, request =
   ApplicationRequest{verb, path, headers, body, end_body}}}`. Stream ids start
-  at 1. Services: daemon 0, sentinel 1, vault 2, authd 3.
+  at 1. Services: daemon 0, sentinel 1, vault 2, authd 3, ssh_access 4,
+  yolk 5.
 - **Response:** `ServiceResponse{payload = ServiceFrame{... response =
   ApplicationResponse{status, headers, body, end_body}}}` plus `body_chunk`
   frames until `end_body`.
@@ -53,7 +54,8 @@ chat / feed / goals / ideas / sessions / ...
   this requires the bounded receive API in curl_cffi 0.17 or later.
 - **Subscriptions** (`chat.subscribe`, `chat.stream`, ...): same envelope, the
   server streams `application/x-ndjson` records in body chunks.
-- **Method table:** `routes.json` (258 methods extracted from the web bundle).
+- **Method table:** `routes.json` (402 methods extracted from the web bundle
+  by `scripts/extract_routes.py`).
 
 ## Server quirks learned from live errors
 
@@ -91,6 +93,28 @@ chat / feed / goals / ideas / sessions / ...
   not in `routes.json`; sent as a raw-path daemon request over the Noise
   tunnel it returns the file (body chunks). `Gateway.download_file()` wraps
   this. `artifacts.fetch_url` is unrelated (needs `project_dir`).
+- **Presentations**: images, files and other widgets the agent shows arrive
+  in history as their own `delta.presentation` events (role `assistant`,
+  empty `reply_to_message_id`, no `status`) after the text reply.
+  `payload.kind` is `image` (`data.images[]`), `file` (`data.file`, a single
+  object), `external_link` (`data.url`), `internal_link_action_card`
+  (`data.title`, `data.subtitle`, `data.data.url`), `space_build_completed`
+  (`data.display_name`, `data.summary`), `browser_task` (`data.display_state`,
+  `data.current_site`), `html` (`data.html`) or `voice_options`.
+  `display_text` is a caption or a markdown link, `fallback_text` the
+  markdown version. Names in `display_text` are wrapped in Unicode isolates
+  (U+2068/U+2069). A browser task that updates is re-sent with a new `seq`
+  and the same `payload.id`; when `data.activity_title_source` is `state`,
+  `display_text` is only the status ("Task completed").
+- **User uploads** (a photo sent from the phone app): the text is
+  `[image:<mime> workspace/<p>]` and `payload.metadata.attachments[]` has
+  `{path: "workspace/<p>", mime_type, filename, bytes_len, width, height}`.
+  The bare path downloads like an agent file as `sandbox://workspace/<p>`.
+- **Quick-reply widgets**: the text holds `[hatch_widget:<widget_id>]` (or
+  `[[hatch_widget:<widget_id>]]`) and `payload.widgets[]` has
+  `{widget_id, kind: "option", data: {options: [...]}, fallback_text,
+  state: {data: {selectedText}, version}}`. `widgets.state.set` and
+  `widgets.state.patch` exist in `routes.json` but are not mapped yet.
 - `session.start`: `{method: "/api/session/start", params: {origin: "fresh",
   lifecycle: "persistent"}}`. A `title` param is accepted but ignored (the
   chat stays untitled), so `start_session` follows up with `session.rename`.
@@ -101,6 +125,60 @@ chat / feed / goals / ideas / sessions / ...
 - `api.idea-cards.execute`: `{ideaCardId, mode: "full"}` plus path param. A
   `session_id` in the body did not move the run into that side chat; the
   user message and the agent's reply landed in the main chat.
+- **Re-deriving the method table:** `scripts/extract_routes.py` crawls the web
+  app and rewrites `routes.json`, `desc0.bin` and `desc1.bin`. Logged out,
+  every muse.ai page redirects to the marketing page (`?aymh_complete=1`),
+  whose ~50 chunks do not include the app. The script therefore loads `/`
+  with the saved cookies, then follows `static/chunks/*.js` references
+  (about 1300 chunks, all public). The route table is one array of
+  `{method,httpMethod,path,...}` literals; the descriptors are base64
+  `FileDescriptorProto` blobs (`noise_transport.proto`,
+  `noise_envelope.proto`). Route literals may carry `requestBody: "empty"`,
+  `requestTimeoutMs`, `responseIdleTimeoutMs` and `maxResponseBytes`
+  (numbers such as `12e4`, `0x2400000`, `1/0` for no limit).
+- **How the web client builds a request:** GET routes fill `{path}` params
+  from the params object and send the rest as query; non-GET routes send the
+  whole params object (path params included) as the JSON body, except
+  `requestBody: "empty"` routes, which send no body and no content-type.
+  `Gateway` matches this. List filters are repeated query keys:
+  `voice.catalog?source=library&gender=F&gender=M` works.
+- `Gateway.request()` with `timeout=None` uses the route's `requestTimeoutMs`
+  (30 s when absent); `raw` and `export-data` default to that.
+- `tasks.list` returns `{schedules: [{id, title, mode, enabled,
+  schedule_key, next_run_at_utc (s), cadence, ...}], invalid}`;
+  `tasks.runs` takes `{limit, job_id?}` and returns `{runs: [{run_id,
+  job_id, status, trigger_reason, scheduled_for_utc, result_summary,
+  error_text}]}`. `tasks.run` is POST `/tasks/{job_id}/run` with body
+  `{job_id}`, and the web client treats it as an inference call like
+  `chat.stream`.
+- `voice.catalog`: `{source: "library", query?, gender?: [F|M|N], accent?:
+  [..], tone?: [..], limit, offset}`; `voice.catalog_filters` lists the
+  values with counts. `voice.speak` (`{voice_id, text, format: "mp3",
+  stream: true}`, binary `audio/mpeg`) returned 404 `preview_audio_disabled`
+  on the test account.
+- Muse Mail (`email.*`) answers 403 `{"code": "email_not_enabled"}` when the
+  account has no mailbox. Thread list: `{data: [{id, subject,
+  message_count, participants, last_message}], paging: {cursors: {after}}}`,
+  next page with `{cursor}`. Messages carry `header_from`,
+  `header_from_name`, `header_to`, `text_body`/`html_body`/`extracted_text`,
+  `sender_authentication.verdict`, `attachments[{index, filename, mime_type,
+  size}]`. `email.attachment.get` returns JSON with `content_base64` and
+  `metadata.mime_type`, not raw bytes.
+- Trusted Network (`peers.*`, `grants.list`, `peerSpaces.*`): `peers.status`
+  always answers, with `availability` (`"disabled"` when off), `features`,
+  `limits` and the agent's `muse_id`. While it is off, the list calls return
+  503 `peer_operation_unavailable` (`peers.connections.list`:
+  `connections_unavailable`). Page params are `{limit (1-100), cursor?}`.
+- `dyi.export` (POST, empty body, ~65 min client timeout) streams the whole
+  data export as `application/zip` with `content-length` and a
+  `content-disposition` file name (`EYI Package_<date>_<n>.zip`). The test
+  account's export was 347 MB / 290 files in ~21 s. `export-data` writes the
+  body chunks straight to disk and checks type and length before keeping it.
+- Services `ssh_access` (4, `ssh.operator.*`) and `yolk` (5,
+  `rv_migration.enable_export`) joined the `ServiceType` enum. Both are
+  operator/migration switches; muse-cli has no named commands for them.
+- `vault.luks_status` returns 401 `request must come through nginx
+  auth_request` over the tunnel.
 - POSTs to muse.ai need browser `Sec-Fetch-*` headers or they return 403.
 - `auth export` on macOS decrypts the muse.ai rows of the browser's own cookie
   database (`~/Library/Application Support/<browser>/<profile>/{Network/,}Cookies`,

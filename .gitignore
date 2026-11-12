@@ -20,3 +20,6 @@ config.json
 
 # Firebase local cache
 .firebase/
+
+# OpenTUI app dependencies
+node_modules/
