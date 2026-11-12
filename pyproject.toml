@@ -53,16 +53,16 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "curl_cffi>=0.11",
+    "curl_cffi>=0.17",
     "noiseprotocol>=0.3",
     "protobuf>=5.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/nikships/muse-cli"
-Documentation = "https://github.com/nikships/muse-cli#readme"
-Repository = "https://github.com/nikships/muse-cli"
-Issues = "https://github.com/nikships/muse-cli/issues"
+Homepage = "https://github.com/Kahtaf/muse-cli"
+Documentation = "https://github.com/Kahtaf/muse-cli/blob/fix/agent-reliability/README.md"
+Repository = "https://github.com/Kahtaf/muse-cli"
+Issues = "https://github.com/Kahtaf/muse-cli/issues"
 Changelog = "https://github.com/nikships/muse-cli/releases"
 "Protocol Notes" = "https://github.com/nikships/muse-cli/blob/main/docs/PROTOCOL.md"
 

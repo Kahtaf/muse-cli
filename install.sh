@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# muse-cli installer: CLI (from PyPI, via uv) + agent skill. No browser needed afterwards.
-# Usage: curl -fsSL https://raw.githubusercontent.com/nikships/muse-cli/main/install.sh | bash
+# muse-cli fork installer: CLI from Git via uv, plus its bundled agent skill.
 set -u
 
-REPO_URL="${MUSE_CLI_REPO:-https://github.com/nikships/muse-cli.git}"
-RAW_URL="${MUSE_CLI_RAW:-https://raw.githubusercontent.com/nikships/muse-cli/main}"
+REPO_URL="${MUSE_CLI_REPO:-https://github.com/Kahtaf/muse-cli.git}"
+REPO_REF="${MUSE_CLI_REF:-fix/agent-reliability}"
 SKILL_DIR="${MUSE_CLI_SKILLS:-$HOME/.agents/skills}"
 BIN_NAME="muse-cli"   # 'muse' clashes with Muse Code, don't use it
 LEGACY_BIN="${MUSE_CLI_BIN:-$HOME/bin}/$BIN_NAME"
@@ -21,10 +20,7 @@ fi
 command -v uv >/dev/null || fail "uv not found after install"
 
 echo "installing $BIN_NAME with uv"
-if ! uv tool install --upgrade muse-cli; then
-  echo "PyPI install failed, installing from $REPO_URL"
-  uv tool install --upgrade "git+$REPO_URL" || fail "uv tool install failed"
-fi
+uv tool install --force --upgrade "git+$REPO_URL@$REPO_REF" || fail "uv tool install failed"
 
 # Older installers wrote a launcher into ~/bin that runs a git checkout's
 # cli.py; it would shadow the new command and break once the checkout updates.
@@ -33,9 +29,8 @@ if [ -f "$LEGACY_BIN" ] && grep -q "cli.py" "$LEGACY_BIN" 2>/dev/null; then
   echo "removed old launcher at $LEGACY_BIN"
 fi
 
-mkdir -p "$SKILL_DIR/muse-cli"
-curl -fsSL "$RAW_URL/skills/muse-cli/SKILL.md" -o "$SKILL_DIR/muse-cli/SKILL.md" \
-  || fail "skill download failed"
+BIN_DIR="$(uv tool dir --bin)"
+MUSE_CLI_SKILLS="$SKILL_DIR" "$BIN_DIR/$BIN_NAME" update --skill || fail "skill install failed"
 echo "skill installed at $SKILL_DIR/muse-cli"
 
 BIN_DIR="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
@@ -113,7 +108,7 @@ fi
 echo
 echo "Full write-up: https://github.com/nikships/muse-cli#log-in-once"
 echo
-echo "Updates: in a terminal, $BIN_NAME notices a newer PyPI release once a day."
+echo "Updates stay on the Kahtaf fork's fix/agent-reliability branch."
 echo "Upgrade with: $BIN_NAME update"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
