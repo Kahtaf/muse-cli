@@ -2,7 +2,7 @@
 
 ## Kahtaf fork
 
-- Working branch: `fix/agent-reliability`, based on upstream v0.3.9.
+- Working branch: `fix/agent-reliability`, based on upstream v0.3.14.
 - Install from this fork, not PyPI. `muse-cli update` retains the fork source.
 - This fork's version uses a local `+kahtaf.N` suffix. Do not run the upstream
   release bump for a fork build. Automatic publishing jobs are upstream-only.

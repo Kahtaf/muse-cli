@@ -66,9 +66,11 @@ chat / feed / goals / ideas / sessions / ...
 - Genuine assistant replies have an **empty `reply_to_message_id`**; proactive
   pushes (Telegram drafts, background task updates) are self-referential
   there. That is how `send` tells a reply apart from background chatter.
-- The pre-send history boundary must succeed before dispatch. Failure must not
-  silently reset that boundary to zero. Concurrent sends in the same chat still
-  cannot be reliably correlated from history alone; use dedicated side chats.
+- `send` reads the newest history `seq` before it sends, then counts only
+  later events as the reply. If that read fails, `send` exits without
+  sending. A baseline of 0 would return an old reply as the new answer.
+- Concurrent sends in the same chat cannot be reliably correlated from
+  history alone; use dedicated side chats.
 - Generated media arrives as a **separate** assistant event after the text
   reply, ~20 s later for an image. `send --download` therefore waits until
   the history seq has been quiet for `SETTLE` seconds before collecting files.
